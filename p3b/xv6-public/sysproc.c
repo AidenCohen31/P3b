@@ -96,18 +96,23 @@ int sys_clone(void){
   void* a1;
   void * a2;
   void * stack;
-  if(argptr(0,&fptr,0) < 0 || argptr(1, &a1, 0) < 0 || argptr(2,&a2, 0) < 0 || argptr(3,&stack, 0) < 0){
+  if(argptr(0,((char**)&fptr),0) < 0 || argptr(1, ((char**)&a1), 0) < 0 || argptr(2,((char**)&a2), 0) < 0 || argptr(3,((char**)&stack), 0) < 0){
     return -1;
   }
-  clone(fptr,a1,a2,stack);
-  return 0;  
+  int pid = clone(fptr,a1,a2,stack);
+  return pid;  
 }
 
 int sys_join(void){
   void ** stack;
-  if(argptr(0,&stack,0) < 0){
+
+  if(argptr(0,((char**)&stack),0) < 0){
     return -1;
   }
-  join(stack);
-  return 0;
+
+  if(stack < 0 || myproc()->sz < (uint) stack + 4 ){
+    return -1;
+  }
+  int pid = join(stack);
+  return pid;
 }

@@ -170,6 +170,14 @@ growproc(int n)
       return -1;
   }
   curproc->sz = sz;
+    acquire(&ptable.lock);
+  for(int i = 0; i < NPROC; i++){
+      if(ptable.proc[i].state != UNUSED && ptable.proc[i].pgdir == curproc->pgdir && ptable.proc[i].pid != curproc->pid ){
+          ptable.proc[i].sz = sz;
+
+      } 
+  }
+  release(&ptable.lock);
   switchuvm(curproc);
   return 0;
 }
@@ -281,7 +289,7 @@ wait(void)
     // Scan through table looking for exited children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc)
+      if(p->parent != curproc || p->pgdir == curproc->pgdir)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
@@ -538,34 +546,36 @@ int clone(void(*fcn)(void *, void *), void *arg1, void *arg2, void *stack){
   int i, pid;
   struct proc *np;
   struct proc *curproc = myproc();
-  if(PGROUNDUP(stack) == PGROUNDDOWN(stack)){
+  if(PGROUNDUP((uint) stack) != (uint) stack || curproc->sz < ((uint) stack) +PGSIZE){
+
     return -1;
   }
+
   // Allocate process.
   if((np = allocproc()) == 0){
     return -1;
   }
+  pid = np->pid;
 
   // Copy process state from proc.
-  if(np->pgdir = curproc->pgdir){
-    kfree(np->kstack);
-    np->kstack = 0;
-    np->state = UNUSED;
-    return -1;
-  }
+  np->pgdir = curproc->pgdir;
   np->sz = curproc->sz;
   np->parent = curproc;
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
-  np->tf->eax = 0;
-  np->tf->esp = stack;
-  np->tf->eip = fcn;
-  np->kstack = stack;
-  *((char*) np->tf->esp-sizeof(void*)) = 0xffffffff;
-  *((char*) np->tf->esp-(2*sizeof(void*))) = arg1;
-  *((char*) stack-(3*sizeof(void*))) = arg2;
 
+  np->tf->eax = 0;
+  np->tf->esp = (uint) stack + PGSIZE;
+  np->tf->eip = (uint) fcn;
+  uint stackr[3];
+  stackr[0] = 0xffffffff;
+  stackr[1] = (uint) arg1;
+  stackr[2] = (uint) arg2;
+  np->tf->esp -= 12;
+  if(copyout(np->pgdir, np->tf->esp, stackr, 12) < 0){
+    return -1;
+  }
   for(i = 0; i < NOFILE; i++)
     if(curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
@@ -573,18 +583,46 @@ int clone(void(*fcn)(void *, void *), void *arg1, void *arg2, void *stack){
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
-  pid = np->pid;
+
 
   acquire(&ptable.lock);
 
   np->state = RUNNABLE;
 
   release(&ptable.lock);
-
   return pid;
 
 }
 int join(void ** stack){
   struct proc *curproc = myproc();
-  return 0;
+  
+    acquire(&ptable.lock);
+  for(int i = 0; i < NPROC; i++){
+      if(ptable.proc[i].state != UNUSED && ptable.proc[i].pgdir == curproc->pgdir && ptable.proc[i].pid != curproc->pid  && ptable.proc[i].parent == curproc){
+          
+          while(ptable.proc[i].state != ZOMBIE){
+             sleep(curproc, &ptable.lock);
+          }
+            struct proc* p = &ptable.proc[i];
+            int pid = p->pid;
+            *stack = (void *) ptable.proc[i].tf->ebp+16-PGSIZE;
+
+            kfree(p->kstack);
+            p->kstack = 0;
+            p->pid = 0;
+            p->parent = 0;
+            p->name[0] = 0;
+            p->killed = 0;
+            p->state = UNUSED;
+
+
+            release(&ptable.lock);
+
+           return pid;
+
+      } 
+  }
+  release(&ptable.lock);
+  return -1;
 }
+

@@ -4,6 +4,7 @@
 #include "user.h"
 #include "x86.h"
 
+
 char*
 strcpy(char *s, const char *t)
 {
@@ -103,4 +104,55 @@ memmove(void *vdst, const void *vsrc, int n)
   while(n-- > 0)
     *dst++ = *src++;
   return vdst;
+}
+
+#define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
+#define PGSIZE (4096)
+
+int thread_create(void (*start_routine)(void*,void*), void* arg1, void* arg2){
+  void * stack = malloc(2*PGSIZE);
+  if( (uint) stack % PGSIZE != 0){
+    stack = (void*) PGROUNDUP((uint) stack);
+  }
+  int pid = clone(start_routine, arg1, arg2, stack);
+  if(pid == -1){
+    return -1;
+  }
+  if(getpid() == pid){
+  return 0;
+  }
+  else{
+    return pid;
+  }
+}
+int thread_join(){
+  void ** stack = malloc(sizeof(void*));
+  int pid = join(stack);
+  if(pid == -1){
+    return -1;
+  }
+  free(*stack);
+  return pid;
+}
+static inline int fetch_and_add(int* variable, int value)
+{
+    __asm__ volatile("lock; xaddl %0, %1"
+      : "+r" (value), "+m" (*variable) // input + output
+      : // No input-only
+      : "memory"
+    );
+    return value;
+}
+void lock_init(lock_t * l){
+    l->free = 0;
+}
+
+void lock_acquire(lock_t * l ){
+    while(fetch_and_add(&(l->free),1) != 0){
+      ;
+    }
+
+}
+void lock_release(lock_t * l){ 
+  l->free = 0; 
 }
